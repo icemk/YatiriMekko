@@ -487,10 +487,9 @@ def main():
     - **Kriptoparalar:** `BTC 0.1`
     """,
     unsafe_allow_html=True
-)
 
-        Bitirdikten sonra **Hesapla** tuşuna bas ve portföy dağılımını incele.
-        """
+    Bitirdikten sonra **Hesapla** tuşuna bas ve portföy dağılımını incele.
+    """
     )
 
     with st.sidebar:
