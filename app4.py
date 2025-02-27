@@ -20,14 +20,14 @@ warnings.simplefilter("ignore", UserWarning)
 
 # Set Streamlit page config
 st.set_page_config(
-    page_title="Portfolio Mekko App",
+    page_title="YatırıMekko",
     layout="wide"
 )
 
 tefas = Crawler()
 
 # Cache TEFAS mutual fund data for today's date
-@st.cache_data
+@st.cache_data(ttl=3600)
 def fetch_tefas_data():
     today_date = datetime.today().strftime('%Y-%m-%d')
     return tefas.fetch(
@@ -38,7 +38,7 @@ def fetch_tefas_data():
 tefas_data = fetch_tefas_data()
 
 # BIST stocks
-@st.cache_data
+@st.cache_data(ttl=360000)
 def get_bist_stocks():
     url = "https://finans.mynet.com/borsa/hisseler/"
     response = requests.get(url)
@@ -63,7 +63,7 @@ def get_bist_stocks():
 
 bist_stock_df = get_bist_stocks()
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def scrape_doviz_emtia():
     """
     Scrapes Gram-based commodity prices (e.g., Gram Altın, Gram Gümüş) from doviz.com/emtia.
@@ -98,7 +98,7 @@ def scrape_doviz_emtia():
 
 emtia_prices_dict = scrape_doviz_emtia()
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def fetch_exchange_rates():
     """Fetch daily close values of currencies from Yahoo (USDTRY=X, EURTRY=X, etc.)."""
     currency_mapping = {
@@ -180,8 +180,12 @@ def parse_user_holdings(portfolio_text: str):
             code = code.upper()
             category = "Unknown"
 
-            # Convert currency
-            if code in currency_mapping:
+            #EUROBOND Handling
+            if code == "EUROBOND":
+                category = "Eurobond"
+            elif code == "TRY":
+                category = "Türk Lirası"  # Mark as cash
+            elif code in currency_mapping:
                 code = currency_mapping[code]
                 category = "Döviz"
             elif code in emtia_mapping1:
@@ -219,7 +223,7 @@ def classify_assets(holdings, tefas_df):
         category = holding["category"]
 
         # Already assigned categories - skip re-check
-        if category in ["Döviz", "Kripto", "Altın", "Gümüş"]:
+        if category in ["Döviz", "Kripto", "Altın", "Gümüş","Türk Lirası", "Eurobond"]:
             continue
 
         # Check if it's a TEFAS mutual fund
@@ -307,15 +311,35 @@ def fetch_prices(holdings, tefas_df):
                 st.error(f"Error fetching price for {code}: {e}")
                 prices[code] = None
 
+        if category in ["Türk Lirası"]:
+            prices[code] = 1
+            
+        if category in ["Eurobond"]:
+            prices[code] = 1000 * exchange_rates.get("USDTRY=X", None)
+            
     return prices
 
 def calculate_net_worth(holdings, prices):
     total = 0
+    usdtry_rate = exchange_rates.get("USDTRY=X", 1)  # Get USD/TRY rate
+
     for h in holdings:
-        code, qty = h["code"], h["quantity"]
-        price = prices.get(code, 0)
-        if price is not None:
-            total += price * qty
+        code, qty, cat = h["code"], h["quantity"], h["category"]
+
+        # Special handling for Eurobond
+        if cat == "Eurobond":
+            total += qty * 1000 * usdtry_rate  # Eurobonds are in USD, so we convert
+
+        # Turkish Lira (TRY) Cash
+        elif cat == "Nakit":
+            total += qty  # TRY is already in TRY
+
+        # Regular assets
+        else:
+            price = prices.get(code, 0)
+            if price is not None:
+                total += price * qty
+
     return total
 
 def display_portfolio_table(holdings, prices):
@@ -349,8 +373,8 @@ def display_portfolio_table(holdings, prices):
 # Asset Classes Mapping
 asset_classes = {
     "Borsa": ["Yabancı ETF", "TR hisse fonu", "TR hisse", "Yabancı hisse"],
-    "Tahvil": ["Diğer fon", "Borçlanma araçları fonu"],
-    "Nakit": ["Para piyasası fonu", "Döviz"],
+    "Tahvil": ["Diğer fon", "Borçlanma araçları fonu","Eurobond"],
+    "Nakit": ["Para piyasası fonu", "Döviz","Türk Lirası"],
     "Emtia & Kripto": ["Kripto", "Altın", "Gümüş"]
 }
 
@@ -370,60 +394,53 @@ def categorize_holdings_for_mekko(holdings, prices):
 
 def create_mekko_chart(investments):
     """
-    Creates the Mekko chart with white borders between entries.
-    Displays % share of each asset class.
+    Creates the Mekko chart with total displayed in both TRY and USD.
     """
-    asset_class_totals = {
-        asset: sum(sub.values()) for asset, sub in investments.items()
-    }
+    asset_class_totals = {asset: sum(sub.values()) for asset, sub in investments.items()}
     asset_class_totals = {k: v for k, v in asset_class_totals.items() if v > 0}
 
-    total_investment = sum(asset_class_totals.values())
-    if total_investment <= 0:
+    total_investment_try = sum(asset_class_totals.values())
+    usdtry_rate = exchange_rates.get("USDTRY=X", 1)
+    total_investment_usd = total_investment_try / usdtry_rate  # Convert to USD
+
+    if total_investment_try <= 0:
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, "No investment data to plot.", ha="center", va="center")
         return fig, ax
 
     sorted_assets = sorted(asset_class_totals.items(), key=lambda x: x[1], reverse=True)
-    sorted_investments = {}
-    for asset, _ in sorted_assets:
-        sub_dict = investments[asset]
-        sorted_sub = dict(sorted(sub_dict.items(), key=lambda x: x[1], reverse=True))
-        sorted_investments[asset] = sorted_sub
+    sorted_investments = {asset: dict(sorted(investments[asset].items(), key=lambda x: x[1], reverse=True)) for asset, _ in sorted_assets}
 
     fig, ax = plt.subplots(figsize=(10, 6))
     x_start = 0
     colors = plt.cm.tab10(np.linspace(0, 1, len(sorted_assets)))
 
     for (asset_class, sub_dict), color in zip(sorted_investments.items(), colors):
-        width = (asset_class_totals[asset_class] / total_investment) * 100
+        width = (asset_class_totals[asset_class] / total_investment_try) * 100
         y_start = 0
 
         for sub_class, amount in sub_dict.items():
             height = (amount / asset_class_totals[asset_class]) * 100 if asset_class_totals[asset_class] else 0
-            rect = plt.Rectangle((x_start, y_start), width, height,
-                                 color=color, edgecolor='white', linewidth=3)  # Increased border width
+            rect = plt.Rectangle((x_start, y_start), width, height, color=color, edgecolor='white', linewidth=3)
             ax.add_patch(rect)
 
-            sub_share = (amount / total_investment) * 100 if total_investment > 0 else 0
+            sub_share = (amount / total_investment_try) * 100 if total_investment_try > 0 else 0
             ax.text(x_start + width / 2, y_start + height / 2,
                     f"{sub_class}\n({sub_share:.1f}%)",
                     ha='center', va='center', color='white', fontweight='bold', fontsize=10)
 
-            # Add a separator line for better visibility
             if y_start > 0:
                 ax.plot([x_start, x_start + width], [y_start, y_start], color='white', linewidth=3)
 
             y_start += height
 
-        # Outer border for each asset class
         rect_border = plt.Rectangle((x_start, 0), width, 100, edgecolor='white', linewidth=4, fill=False)
         ax.add_patch(rect_border)
 
-        asset_share = (asset_class_totals[asset_class] / total_investment) * 100
+        asset_share = (asset_class_totals[asset_class] / total_investment_try) * 100
         ax.text(x_start + width / 2, -5, asset_class,
                 ha='center', va='top', fontsize=10, color='black', fontweight='bold')
-        ax.text(x_start + width / 2, 105, f"{asset_share:.1f}%",
+        ax.text(x_start + width / 2, 100, f"{asset_share:.1f}%",
                 ha='center', va='bottom', fontsize=10, color='black', fontweight='bold')
 
         x_start += width
@@ -432,11 +449,16 @@ def create_mekko_chart(investments):
     ax.set_ylim(-10, 120)
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_title("Varlık Sınıflarına göre Portföy Dağılımı", fontweight='bold')
+    ax.set_title("Varlık Sınıflarına Göre Portföy Dağılımı", fontweight='bold')
 
-    plt.text(105, 118, f"Total: {total_investment:,.0f} TRY", ha='right', va='top', fontsize=12, fontweight='bold', color='black')
+    # Show total in both TRY and USD
+    plt.text(105, 120, f"Total: {total_investment_try:,.0f} TRY\n(~{total_investment_usd:,.0f} USD)",
+             ha='right', va='top', fontsize=12, fontweight='bold', color='black')
 
     return fig, ax
+
+
+
 
 ###############################################################################
 # 3. STREAMLIT APP LAYOUT
@@ -446,7 +468,7 @@ def main():
     st.title("YatırıMekko: Portföyünü tek yerden takip et! Gerçekten.")
     st.markdown(
         """
-        YatırıMekko **TEFAS fonları, BIST hisseleri, Yabancı piyasalardaki hisse ve ETF'leri, Emtia'ları (Altın, Gümüş), 
+        YatırıMekko **TEFAS fonları, BIST hisseleri, Yabancı piyasalardaki hisse ve ETF'leri, Emtia'ları (Altın, Gümüş), Eurobond'u
         Nakit paranı ve Kriptoparaları** destekler. 
         
         **Portföyünü soldaki kutuya aşağıdaki formatta satır satır gir:**
@@ -464,8 +486,11 @@ def main():
           `QQQM 5`  
         - **Emtia'lar:**  
           `GRAMALTIN 10`  
-        - **Döviz:**  
-          `USD 1000`  
+        - **Eurobond:**  
+          `EUROBOND 8` 
+        - **Nakit:**  
+          `USD 1000`
+          `TRY 50000`
         - **Kriptoparalar:**  
           `BTC 0.1`  
 
