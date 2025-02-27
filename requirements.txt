@@ -1,7 +1,5 @@
 streamlit 
 tefas-crawler 
-webdriver-manager 
-webdrivermanager 
 requests 
 beautifulsoup4 
 yfinance 
