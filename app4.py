@@ -468,31 +468,26 @@ def main():
     st.title("YatırıMekko: Portföyünü tek yerden takip et! Gerçekten.")
     st.markdown(
         """
-        YatırıMekko **TEFAS fonları, BIST hisseleri, Yabancı piyasalardaki hisse ve ETF'leri, Emtia'ları (Altın, Gümüş), Eurobond'u
+        YatırıMekko **TEFAS fonları, BIST hisseleri, Yabancı piyasalardaki hisse ve ETF'leri, Emtia'ları (Altın, Gümüş), Eurobond'u,
         Nakit paranı ve Kriptoparaları** destekler. 
         
         **Portföyünü soldaki kutuya aşağıdaki formatta satır satır gir:**
         
         **ENSTRÜMANKODU  ADET**
         
-        Örnekler:
-        - **TEFAS Fonları:**  
-          `NNF 2000`  
-        - **BIST Hisseleri:**  
-          `THYAO 200`  
-        - **Yabancı Hisseler:**  
-          `AAPL 10`  
-        - **Yabancı ETF'ler:**  
-          `QQQM 5`  
-        - **Emtia'lar:**  
-          `GRAMALTIN 10`  
-        - **Eurobond:**  
-          `EUROBOND 8` 
-        - **Nakit:**  
-          `USD 1000`
-          `TRY 50000`
-        - **Kriptoparalar:**  
-          `BTC 0.1`  
+    **Örnekler:**
+
+    - **TEFAS Fonları:** `NNF 2000`  
+    - **BIST Hisseleri:** `THYAO 200`  
+    - **Yabancı Hisseler:** `AAPL 10`  
+    - **Yabancı ETF'ler:** `QQQM 5`  
+    - **Emtia'lar:** `GRAMALTIN 10`  
+    - **Eurobond:** `EUROBOND 8`  
+    - **Nakit:** `USD 1000` • `TRY 50000`  
+    - **Kriptoparalar:** `BTC 0.1`
+    """,
+    unsafe_allow_html=True
+)
 
         Bitirdikten sonra **Hesapla** tuşuna bas ve portföy dağılımını incele.
         """
