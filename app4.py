@@ -475,21 +475,20 @@ def main():
         
         **ENSTRÜMANKODU  ADET**
         
-    **Örnekler:**
-
-    - **TEFAS Fonları:** `NNF 2000`  
-    - **BIST Hisseleri:** `THYAO 200`  
-    - **Yabancı Hisseler:** `AAPL 10`  
-    - **Yabancı ETF'ler:** `QQQM 5`  
-    - **Emtia'lar:** `GRAMALTIN 10`  
-    - **Eurobond:** `EUROBOND 8`  
-    - **Nakit:** `USD 1000` • `TRY 50000`  
-    - **Kriptoparalar:** `BTC 0.1`
-    """,
-    unsafe_allow_html=True
-
-    Bitirdikten sonra **Hesapla** tuşuna bas ve portföy dağılımını incele.
-    """
+        **Örnekler:**
+        
+        - **TEFAS Fonları:** `NNF 2000`  
+        - **BIST Hisseleri:** `THYAO 200`  
+        - **Yabancı Hisseler:** `AAPL 10`  
+        - **Yabancı ETF'ler:** `QQQM 5`  
+        - **Emtia'lar:** `GRAMALTIN 10`  
+        - **Eurobond:** `EUROBOND 8`  
+        - **Nakit:** `USD 1000` • `TRY 50000`  
+        - **Kriptoparalar:** `BTC 0.1`
+        
+        Bitirdikten sonra **Hesapla** tuşuna bas ve portföy dağılımını incele.
+        """,
+        unsafe_allow_html=True  # ✅ Correct placement outside of the string
     )
 
     with st.sidebar:
