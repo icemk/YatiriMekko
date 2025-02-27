@@ -1,1 +1,1 @@
-!pip install streamlit tefas-crawler webdriver-manager webdrivermanager requests beautifulsoup4 yfinance matplotlib numpy pandas adjustText
+streamlit tefas-crawler webdriver-manager webdrivermanager requests beautifulsoup4 yfinance matplotlib numpy pandas adjustText
