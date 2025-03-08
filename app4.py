@@ -26,14 +26,31 @@ st.set_page_config(
 
 tefas = Crawler()
 
-# Cache TEFAS mutual fund data for today's date
+# Cache TEFAS mutual fund data for today's date or the last available trading date
 @st.cache_data(ttl=3600)
 def fetch_tefas_data():
-    today_date = datetime.today().strftime('%Y-%m-%d')
-    return tefas.fetch(
-        start=today_date,
-        columns=["code", "date", "price", "title", "stock"]
-    )
+    """Fetches TEFAS data for the most recent valid market day."""
+    from datetime import datetime, timedelta
+
+    def is_valid_tefas_data(date_str):
+        """Attempts to fetch TEFAS data and checks if it's empty or invalid."""
+        try:
+            data = tefas.fetch(start=date_str, columns=["code", "date", "price", "title", "stock"])
+            return not data.empty  # Returns True if data is available
+        except:
+            return False  # Returns False if an error occurs
+
+    # Start with today's date and go back until we find valid data
+    days_back = 0
+    while True:
+        check_date = (datetime.today() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+        # Only proceed if TEFAS data is available
+        if is_valid_tefas_data(check_date):
+            return tefas.fetch(start=check_date, columns=["code", "date", "price", "title", "stock"])
+
+        days_back += 1  # Move back one more day
+
 
 tefas_data = fetch_tefas_data()
 
