@@ -448,7 +448,7 @@ def main():
     # Initialize the cookie manager using a secret key stored in Streamlit secrets.
     # Make sure you add a [COOKIE] section with COOKIE_SECRET_KEY in your Streamlit secrets file.
 
-    cookies = EncryptedCookieManager(prefix="yatirimekko_",password = st.secrets["COOKIE"]["COOKIE_SECRET_KEY"]
+    cookies = EncryptedCookieManager(prefix="yatirimekko_",password = st.secrets["COOKIE"]["COOKIE_SECRET_KEY"])
     if not cookies.ready():
         st.stop()  # Wait until cookies are ready
 
