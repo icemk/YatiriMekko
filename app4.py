@@ -1,67 +1,79 @@
 import streamlit as st
+
+st.set_page_config(page_title="YatırıMekko", layout="wide")
+
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
-
 from tefas import Crawler
 import matplotlib.pyplot as plt
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
 import warnings
+from supabase import create_client, Client
+import uuid
+from streamlit_cookies_manager import EncryptedCookieManager
+
+
+
+# These must be stored in your Streamlit secrets under the [SUPABASE] section
+SUPABASE_URL = st.secrets["SUPABASE"]["URL"]
+SUPABASE_KEY = st.secrets["SUPABASE"]["KEY"]
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 ###############################################################################
 # 1. GLOBAL SETUP & CACHING
 ###############################################################################
 
-# Avoid certain warnings
 warnings.simplefilter("ignore", UserWarning)
 
-# Set Streamlit page config
-st.set_page_config(
-    page_title="YatırıMekko",
-    layout="wide"
-)
 
 tefas = Crawler()
 
-# Cache TEFAS mutual fund data for today's date or the last available trading date
+# We define these variables here, but set them to None until we call get_data().
+tefas_data = None
+bist_stock_df = None
+emtia_prices_dict = None
+exchange_rates = None
+
+
+def retrieve_data(user_id):
+    try:
+        response = supabase.table("yatirimekko").select("*").eq("user_id", user_id).execute()
+        if response.data:
+            return response.data[0]  # Assuming one record per user
+        else:
+            return None
+    except Exception as e:
+        st.error(f"Error retrieving data: {e}")
+        return None
+
 @st.cache_data(ttl=3600)
 def fetch_tefas_data():
-    """Fetches TEFAS data for the most recent valid market day."""
-    from datetime import datetime, timedelta
-
     def is_valid_tefas_data(date_str):
-        """Attempts to fetch TEFAS data and checks if it's empty or invalid."""
         try:
             data = tefas.fetch(start=date_str, columns=["code", "date", "price", "title", "stock"])
-            return not data.empty  # Returns True if data is available
+            return not data.empty
         except:
-            return False  # Returns False if an error occurs
+            return False
 
-    # Start with today's date and go back until we find valid data
     days_back = 0
     while True:
         check_date = (datetime.today() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-
-        # Only proceed if TEFAS data is available
         if is_valid_tefas_data(check_date):
             return tefas.fetch(start=check_date, columns=["code", "date", "price", "title", "stock"])
+        days_back += 1
 
-        days_back += 1  # Move back one more day
-
-
-tefas_data = fetch_tefas_data()
-
-# BIST stocks
 @st.cache_data(ttl=360000)
 def get_bist_stocks():
     url = "https://finans.mynet.com/borsa/hisseler/"
     response = requests.get(url)
     if response.status_code != 200:
         st.warning("Failed to retrieve BIST stocks.")
-        return pd.DataFrame(columns=["Yahoo Finance Code", "Simplified Code"])  # empty
+        return pd.DataFrame(columns=["Yahoo Finance Code", "Simplified Code"])
 
     soup = BeautifulSoup(response.text, 'html.parser')
     stock_elements = soup.select("table tr td a")
@@ -71,29 +83,23 @@ def get_bist_stocks():
         if stock.text.strip()
     ]
 
-    # Create DataFrame with two columns
     bist_df = pd.DataFrame({
-        "Simplified Code": [s.split(".")[0] for s in bist_stocks],  # remove '.IS'
+        "Simplified Code": [s.split(".")[0] for s in bist_stocks],
         "Yahoo Finance Code": bist_stocks
     })
     return bist_df
 
-bist_stock_df = get_bist_stocks()
-
 @st.cache_data(ttl=60)
 def scrape_doviz_emtia():
-    """
-    Scrapes Gram-based commodity prices (e.g., Gram Altın, Gram Gümüş) from doviz.com/emtia.
-    Returns a dict of { 'GRAM ALTIN': price, 'GRAM GÜMÜŞ': price, ... }
-    """
     url = "https://www.doviz.com/emtia"
     headers = {
-        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                       " AppleWebKit/537.36 (KHTML, like Gecko)"
-                       " Chrome/91.0.4472.124 Safari/537.36")
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            " AppleWebKit/537.36 (KHTML, like Gecko)"
+            " Chrome/91.0.4472.124 Safari/537.36"
+        )
     }
     response = requests.get(url, headers=headers)
-
     if response.status_code != 200:
         st.warning(f"Failed to retrieve emtia data: {response.status_code}")
         return {}
@@ -113,11 +119,8 @@ def scrape_doviz_emtia():
                 emtia_dict[name.upper()] = float(cleaned_price)
     return emtia_dict
 
-emtia_prices_dict = scrape_doviz_emtia()
-
 @st.cache_data(ttl=60)
 def fetch_exchange_rates():
-    """Fetch daily close values of currencies from Yahoo (USDTRY=X, EURTRY=X, etc.)."""
     currency_mapping = {
         "USD": "USDTRY=X",
         "EUR": "EURTRY=X",
@@ -139,9 +142,21 @@ def fetch_exchange_rates():
             exchange_rates[ticker] = None
     return exchange_rates
 
-exchange_rates = fetch_exchange_rates()
+###############################################################################
+# Define a simple function that sets all global data variables in one shot
+###############################################################################
+def get_data():
+    global tefas_data, bist_stock_df, emtia_prices_dict, exchange_rates
+    tefas_data = fetch_tefas_data()
+    bist_stock_df = get_bist_stocks()
+    emtia_prices_dict = scrape_doviz_emtia()
+    exchange_rates = fetch_exchange_rates()
 
-# Additional dictionaries from your original script
+
+###############################################################################
+# 2. CORE FUNCTIONS ADAPTED FOR STREAMLIT
+###############################################################################
+
 currency_mapping = {
     "USD": "USDTRY=X",
     "EUR": "EURTRY=X",
@@ -172,19 +187,7 @@ crypto_df = pd.DataFrame({
                "LINK-USD", "XLM-USD", "AVAX-USD", "FDUSD-USD", "LTC-USD"]
 })
 
-###############################################################################
-# 2. CORE FUNCTIONS ADAPTED FOR STREAMLIT
-###############################################################################
-
 def parse_user_holdings(portfolio_text: str):
-    """
-    Parses multiline text from the user. Each line should be "CODE QUANTITY".
-    Example lines:
-      USD 1000
-      TUPRS 50
-      AAPL 10
-    Returns a list of holdings: [ { code: ..., quantity: ..., category: ... }, ... ]
-    """
     lines = portfolio_text.strip().split("\n")
     holdings = []
 
@@ -197,11 +200,10 @@ def parse_user_holdings(portfolio_text: str):
             code = code.upper()
             category = "Unknown"
 
-            #EUROBOND Handling
             if code == "EUROBOND":
                 category = "Eurobond"
             elif code == "TRY":
-                category = "Türk Lirası"  # Mark as cash
+                category = "Türk Lirası"
             elif code in currency_mapping:
                 code = currency_mapping[code]
                 category = "Döviz"
@@ -211,11 +213,9 @@ def parse_user_holdings(portfolio_text: str):
             elif code in emtia_mapping2:
                 code = emtia_mapping2[code]
                 category = "Gümüş"
-            # Convert BIST stock codes
             elif code in bist_stock_df["Simplified Code"].values:
                 code = bist_stock_df.loc[bist_stock_df["Simplified Code"] == code, "Yahoo Finance Code"].values[0]
                 category = "TR hisse"
-            # Convert Crypto codes
             elif code in crypto_df["User input"].values:
                 symbol = crypto_df.loc[crypto_df["User input"] == code, "Symbol"].values[0]
                 code = symbol
@@ -231,19 +231,13 @@ def parse_user_holdings(portfolio_text: str):
     return holdings
 
 def classify_assets(holdings, tefas_df):
-    """
-    Classifies each holding as 'Döviz', 'Kripto', 'Altın', 'Gümüş',
-    or determines if it's a TEFAS mutual fund, a stock, an ETF, etc.
-    """
     for holding in holdings:
         code = holding["code"]
         category = holding["category"]
 
-        # Already assigned categories - skip re-check
-        if category in ["Döviz", "Kripto", "Altın", "Gümüş","Türk Lirası", "Eurobond"]:
+        if category in ["Döviz", "Kripto", "Altın", "Gümüş", "Türk Lirası", "Eurobond"]:
             continue
 
-        # Check if it's a TEFAS mutual fund
         fund_info = tefas_df[tefas_df["code"] == code]
         if not fund_info.empty:
             fund_stock_ratio = fund_info.iloc[-1]["stock"]
@@ -258,7 +252,6 @@ def classify_assets(holdings, tefas_df):
                 holding["category"] = "Diğer fon"
             continue
 
-        # Otherwise, let's see if it’s an ETF/Stock from Yahoo
         try:
             ticker = yf.Ticker(code)
             qtype = ticker.info.get("quoteType", "Unknown").upper()
@@ -273,31 +266,23 @@ def classify_assets(holdings, tefas_df):
             else:
                 holding["category"] = "Unknown"
         except Exception:
-            # If we can't fetch anything, just keep it as "Unknown"
             pass
 
     return holdings
 
 def fetch_prices(holdings, tefas_df):
-    """Fetch the last known price in TRY for each holding."""
     prices = {}
     for h in holdings:
         code, category = h["code"], h["category"]
 
-        # 1. Döviz => use exchange_rates
         if category == "Döviz":
             prices[code] = exchange_rates.get(code, None)
             continue
 
-        # 2. Altın / Gümüş => use emtia_prices_dict
         if category in ["Altın", "Gümüş"]:
-            # code is something like "GRAM ALTIN" or "GRAM GÜMÜŞ" in uppercase
-            # e.g. stored as "GRAM ALTIN" in your dictionary
-            # your dict keys are uppercase => "GRAM ALTIN", "GRAM GÜMÜŞ"
             prices[code] = emtia_prices_dict.get(code, None)
             continue
 
-        # 3. TEFAS mutual funds => tefas_df
         if category in ["TR hisse fonu", "Borçlanma araçları fonu", "Para piyasası fonu", "Diğer fon"]:
             fund_data = tefas_df[tefas_df["code"] == code]
             if not fund_data.empty:
@@ -306,17 +291,14 @@ def fetch_prices(holdings, tefas_df):
                 prices[code] = None
             continue
 
-        # 4. Stocks, ETFs, Kripto => Yahoo Finance close. Convert to TRY if needed.
         if category in ["Yabancı ETF", "TR hisse", "Yabancı hisse", "Kripto", "Unknown"]:
             try:
                 ticker = yf.Ticker(code)
                 hist = ticker.history(period="1d")
                 if not hist.empty:
                     last_price = hist["Close"].iloc[-1]
-                    # Currency might be "USD" => we multiply by USDTRY
-                    yahoo_currency = ticker.info.get("currency", "TRY")  # e.g. "USD" or "TRY"
+                    yahoo_currency = ticker.info.get("currency", "TRY")
                     if yahoo_currency.upper() != "TRY":
-                        # Compose something like "USDTRY=X"
                         pair = (yahoo_currency + "TRY=X").upper()
                         fx_rate = exchange_rates.get(pair, None)
                         if fx_rate is not None:
@@ -328,30 +310,23 @@ def fetch_prices(holdings, tefas_df):
                 st.error(f"Error fetching price for {code}: {e}")
                 prices[code] = None
 
-        if category in ["Türk Lirası"]:
+        if category == "Türk Lirası":
             prices[code] = 1
-            
-        if category in ["Eurobond"]:
+
+        if category == "Eurobond":
             prices[code] = 1000 * exchange_rates.get("USDTRY=X", None)
-            
+
     return prices
 
 def calculate_net_worth(holdings, prices):
     total = 0
-    usdtry_rate = exchange_rates.get("USDTRY=X", 1)  # Get USD/TRY rate
+    usdtry_rate = exchange_rates.get("USDTRY=X", 1)
 
     for h in holdings:
         code, qty, cat = h["code"], h["quantity"], h["category"]
 
-        # Special handling for Eurobond
         if cat == "Eurobond":
-            total += qty * 1000 * usdtry_rate  # Eurobonds are in USD, so we convert
-
-        # Turkish Lira (TRY) Cash
-        elif cat == "Nakit":
-            total += qty  # TRY is already in TRY
-
-        # Regular assets
+            total += qty * 1000 * usdtry_rate
         else:
             price = prices.get(code, 0)
             if price is not None:
@@ -360,43 +335,30 @@ def calculate_net_worth(holdings, prices):
     return total
 
 def display_portfolio_table(holdings, prices):
-    """
-    Displays the portfolio table with a % share column.
-    - Price and Quantity: 2 decimal places.
-    - Total Value and % Share: No decimals.
-    - Sorted from largest to smallest position.
-    """
     df = pd.DataFrame(holdings)
     df["Price (TRY)"] = df["code"].map(prices)
     df["Total Value (TRY)"] = df["quantity"] * df["Price (TRY)"]
 
-    # Drop rows where price is NaN
     df = df.dropna(subset=["Price (TRY)"])
 
-    # Compute % Share
     total_value = df["Total Value (TRY)"].sum()
     df["% Share"] = (df["Total Value (TRY)"] / total_value) * 100
 
-    # Format numerical values
-    df["Price (TRY)"] = df["Price (TRY)"].round(2)  # 2 decimal places, thousands separator
-    df["Total Value (TRY)"] = df["Total Value (TRY)"].astype(int)  # No decimals, thousands separator
-    df["% Share"] = df["% Share"].round(1)  # No decimals
+    df["Price (TRY)"] = df["Price (TRY)"].round(2)
+    df["Total Value (TRY)"] = df["Total Value (TRY)"].astype(int)
+    df["% Share"] = df["% Share"].round(1)
 
-    # Sort positions from largest to smallest
     df = df.sort_values(by="% Share", ascending=False)
-
     return df
 
-# Asset Classes Mapping
 asset_classes = {
     "Borsa": ["Yabancı ETF", "TR hisse fonu", "TR hisse", "Yabancı hisse"],
-    "Tahvil": ["Diğer fon", "Borçlanma araçları fonu","Eurobond"],
-    "Nakit": ["Para piyasası fonu", "Döviz","Türk Lirası"],
+    "Tahvil": ["Diğer fon", "Borçlanma araçları fonu", "Eurobond"],
+    "Nakit": ["Para piyasası fonu", "Döviz", "Türk Lirası"],
     "Emtia & Kripto": ["Kripto", "Altın", "Gümüş"]
 }
 
 def categorize_holdings_for_mekko(holdings, prices):
-    """Group holdings by major asset class for the Mekko chart."""
     data = {"Borsa": {}, "Tahvil": {}, "Nakit": {}, "Emtia & Kripto": {}}
     for h in holdings:
         cat = h["category"]
@@ -409,16 +371,19 @@ def categorize_holdings_for_mekko(holdings, prices):
                 break
     return data
 
+###############################################################################
+# Here we fix the exchange_rates reference in create_mekko_chart
+###############################################################################
 def create_mekko_chart(investments):
-    """
-    Creates the Mekko chart with total displayed in both TRY and USD.
-    """
+    # ✅ Instead of referencing global "exchange_rates", fetch from session_state
+    rates = st.session_state.get("exchange_rates", {})
+    usdtry_rate = rates.get("USDTRY=X", 1)
+
     asset_class_totals = {asset: sum(sub.values()) for asset, sub in investments.items()}
     asset_class_totals = {k: v for k, v in asset_class_totals.items() if v > 0}
 
     total_investment_try = sum(asset_class_totals.values())
-    usdtry_rate = exchange_rates.get("USDTRY=X", 1)
-    total_investment_usd = total_investment_try / usdtry_rate  # Convert to USD
+    total_investment_usd = total_investment_try / usdtry_rate
 
     if total_investment_try <= 0:
         fig, ax = plt.subplots()
@@ -426,7 +391,10 @@ def create_mekko_chart(investments):
         return fig, ax
 
     sorted_assets = sorted(asset_class_totals.items(), key=lambda x: x[1], reverse=True)
-    sorted_investments = {asset: dict(sorted(investments[asset].items(), key=lambda x: x[1], reverse=True)) for asset, _ in sorted_assets}
+    sorted_investments = {
+        asset: dict(sorted(investments[asset].items(), key=lambda x: x[1], reverse=True))
+        for asset, _ in sorted_assets
+    }
 
     fig, ax = plt.subplots(figsize=(10, 6))
     x_start = 0
@@ -468,20 +436,47 @@ def create_mekko_chart(investments):
     ax.set_yticks([])
     ax.set_title("Varlık Sınıflarına Göre Portföy Dağılımı", fontweight='bold')
 
-    # Show total in both TRY and USD
     plt.text(105, 120, f"Total: {total_investment_try:,.0f} TRY\n(~{total_investment_usd:,.0f} USD)",
              ha='right', va='top', fontsize=12, fontweight='bold', color='black')
 
     return fig, ax
 
-
-
-
 ###############################################################################
 # 3. STREAMLIT APP LAYOUT
 ###############################################################################
-
 def main():
+    # Initialize the cookie manager using a secret key stored in Streamlit secrets.
+    # Make sure you add a [COOKIE] section with COOKIE_SECRET_KEY in your Streamlit secrets file.
+
+    cookies = EncryptedCookieManager(prefix="yatirimekko_",password = st.secrets["COOKIE"]["COOKIE_SECRET_KEY"]
+    if not cookies.ready():
+        st.stop()  # Wait until cookies are ready
+
+    # If there's no user_id stored in the cookies, generate one and save it.
+    if "user_id" not in cookies:
+        cookies["user_id"] = str(uuid.uuid4())
+        cookies.save()
+
+    # Retrieve the persistent user id.
+    persistent_user_id = cookies.get("user_id")
+
+    if "retrieved_data" not in st.session_state:
+        st.session_state["retrieved_data"] = retrieve_data(persistent_user_id)
+        if st.session_state["retrieved_data"]:
+            st.session_state["portfolio_input"] = st.session_state["retrieved_data"].get("portfolio_input", "")    
+
+    # 1) Initialize session_state so results aren't lost if user modifies text
+    if "has_calculated" not in st.session_state:
+        st.session_state["has_calculated"] = False
+    if "portfolio_df" not in st.session_state:
+        st.session_state["portfolio_df"] = None
+    if "investments" not in st.session_state:
+        st.session_state["investments"] = None
+    if "net_worth" not in st.session_state:
+        st.session_state["net_worth"] = 0.0
+    if "exchange_rates" not in st.session_state:
+        st.session_state["exchange_rates"] = None
+
     st.title("YatırıMekko: Portföyünü tek yerden takip et! Gerçekten.")
     st.markdown(
         """
@@ -505,52 +500,96 @@ def main():
         
         Bitirdikten sonra **Hesapla** tuşuna bas ve portföy dağılımını incele.
         """,
-        unsafe_allow_html=True  # ✅ Correct placement outside of the string
+        unsafe_allow_html=True
     )
 
+    # SIDEBAR
     with st.sidebar:
         st.header("Portföyünü Gir")
-        portfolio_text = st.text_area(
-            "Format: KOD ADET",
-            height=200
-        )
+        portfolio_text = st.text_area("Format: KOD ADET", height=200, key="portfolio_input")
+        st.write(f"Your persistent user ID: {persistent_user_id}")
         calc_button = st.button("Hesapla")
 
+    # Only proceed with calculation if button is pressed
+    if calc_button:
+        if not portfolio_text.strip():
+            st.warning("No portfolio data provided. Please enter something in the sidebar.")
+        else:
+            # CALL OUR NEW FUNCTION HERE, ONCE, AFTER USER PRESSES 'Hesapla'
+            get_data()
 
-    # ------------------  User clicked Calculate  ---------------------
-    if not portfolio_text.strip():
-        st.warning("No portfolio data provided. Please enter something in the sidebar.")
-        return
+            # PROCESS PORTFOLIO
+            user_holdings = parse_user_holdings(portfolio_text)
+            classified_holdings = classify_assets(user_holdings, tefas_data)
+            prices = fetch_prices(classified_holdings, tefas_data)
+            net_worth = calculate_net_worth(classified_holdings, prices)
 
-    # 1. Parse user holdings
-    user_holdings = parse_user_holdings(portfolio_text)
+            # Build the table and the investments dictionary
+            portfolio_df = display_portfolio_table(classified_holdings, prices)
+            investments = categorize_holdings_for_mekko(classified_holdings, prices)
 
-    if not user_holdings:
-        st.warning("No valid portfolio lines were found. Please check your format.")
-        return
+            # Store results in session_state so they persist
+            st.session_state["has_calculated"] = True
+            st.session_state["portfolio_df"] = portfolio_df
+            st.session_state["investments"] = investments
+            st.session_state["net_worth"] = net_worth
+            st.session_state["exchange_rates"] = exchange_rates
 
-    # 2. Classify assets
-    classified_holdings = classify_assets(user_holdings, tefas_data)
+    # SHOW RESULTS IF ALREADY CALCULATED (OR JUST DONE)
+    if st.session_state["has_calculated"]:
+        st.subheader("Tablo Görünümü")
+        st.data_editor(
+            st.session_state["portfolio_df"],
+            use_container_width=True,
+            hide_index=True,
+            column_config={"% Share": st.column_config.NumberColumn("% Share", format="%.1f%%")}
+        )
 
-    # 3. Fetch prices
-    prices = fetch_prices(classified_holdings, tefas_data)
+        st.subheader("Mekko Görünümü")
+        fig, ax = create_mekko_chart(st.session_state["investments"])
+        st.pyplot(fig)
 
-    # 4. Calculate net worth
-    net_worth = calculate_net_worth(classified_holdings, prices)
+        # SIDEBAR: Upload after we have results
+        with st.sidebar:
+            st.markdown("---")
+            upload_button = st.button("Sonuçları kaydet")
+            if upload_button:
+                if st.session_state["portfolio_df"] is None:
+                    st.warning("Önce 'Hesapla' tuşuna basmalısınız!")
+                else:
+                    processed_json = st.session_state["portfolio_df"].to_json(orient="records")
+                    data_to_insert = {
+                        "user_id": persistent_user_id,
+                        "portfolio_input": portfolio_text,
+                        "processed_output": processed_json,
+                        "net_worth": float(st.session_state["net_worth"]),
+                        "usdtry_rate": float(st.session_state["exchange_rates"].get("USDTRY=X", 1))
+                    }
+                    try:
+                        response = supabase.table("yatirimekko").insert(data_to_insert).execute()
+                        st.success("Başarıyla kaydedildi!")
+                    except Exception as e:
+                        st.error(f"Hata oluştu: {e}")
+    else:
+        # If user never calculated, display helpful message
+        st.info("Portföyünüzü girin ve 'Hesapla' tuşuna basın.")
 
-    # 5. Display portfolio table
-    st.subheader("Tablo Görünümü")
-    portfolio_df = display_portfolio_table(classified_holdings, prices)
-    # Show table
-    st.data_editor(portfolio_df, use_container_width=True,hide_index=True,column_config={"% Share": st.column_config.NumberColumn("% Share", format="%.1f%%")})  # Display as percentage with 1 decimal
+    # Feedback Section
+    st.markdown("---")
+    st.subheader("Geri Bildirim")
+    feedback_text = st.text_area("Uygulamayla ilgili önerilerinizi veya sorunlarınızı paylaşın:", key="feedback_input")
 
-    # 6. Categorize holdings for Mekko
-    investments = categorize_holdings_for_mekko(classified_holdings, prices)
+    if st.button("Gönder"):
+        if not feedback_text.strip():
+            st.warning("Lütfen bir geri bildirim girin!")
+        else:
+            feedback_data = {"user_id": persistent_user_id, "feedback": feedback_text}
+            try:
+                response = supabase.table("feedback").insert(feedback_data).execute()
+                st.success("Geri bildiriminiz kaydedildi! Teşekkürler.")
+            except Exception as e:
+                st.error(f"Geri bildirim kaydedilirken hata oluştu: {e}")
 
-    # 7. Create & display Mekko chart
-    st.subheader("Mekko Görünümü")
-    fig, ax = create_mekko_chart(investments)
-    st.pyplot(fig)
 
 if __name__ == "__main__":
     main()
