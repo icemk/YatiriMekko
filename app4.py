@@ -42,13 +42,23 @@ exchange_rates = None
 
 def retrieve_data(user_id):
     try:
-        response = supabase.table("yatirimekko").select("*").eq("user_id", user_id).execute()
+        # Query the 'yatirimekko' table, filtering by user_id
+        # Order by 'created_at' descending so the newest entry is first
+        # Limit to 1 so we only get that single most recent record
+        response = (
+            supabase
+            .table("yatirimekko")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
         if response.data:
-            return response.data[0]  # Assuming one record per user
+            return response.data[0]  # Return the first (newest) record
         else:
             return None
     except Exception as e:
-        st.error(f"Error retrieving data: {e}")
         return None
 
 @st.cache_data(ttl=3600)
