@@ -6,3 +6,5 @@ yfinance
 matplotlib 
 numpy 
 pandas
+supabase
+streamlit-cookies-manager
