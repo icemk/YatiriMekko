@@ -463,7 +463,25 @@ def main():
     if "retrieved_data" not in st.session_state:
         st.session_state["retrieved_data"] = retrieve_data(persistent_user_id)
         if st.session_state["retrieved_data"]:
-            st.session_state["portfolio_input"] = st.session_state["retrieved_data"].get("portfolio_input", "")    
+            # 1. Preload the saved portfolio text
+            st.session_state["portfolio_input"] = st.session_state["retrieved_data"].get("portfolio_input", "")
+            
+            # 2. Run the same calculation logic as the "Hesapla" button
+            get_data()
+            user_holdings = parse_user_holdings(st.session_state["portfolio_input"])
+            classified_holdings = classify_assets(user_holdings, tefas_data)
+            prices = fetch_prices(classified_holdings, tefas_data)
+            net_worth = calculate_net_worth(classified_holdings, prices)
+
+            portfolio_df = display_portfolio_table(classified_holdings, prices)
+            investments = categorize_holdings_for_mekko(classified_holdings, prices)
+
+            st.session_state["has_calculated"] = True
+            st.session_state["portfolio_df"] = portfolio_df
+            st.session_state["investments"] = investments
+            st.session_state["net_worth"] = net_worth
+            st.session_state["exchange_rates"] = exchange_rates
+
 
     # 1) Initialize session_state so results aren't lost if user modifies text
     if "has_calculated" not in st.session_state:
@@ -507,7 +525,7 @@ def main():
     with st.sidebar:
         st.header("Portföyünü Gir")
         portfolio_text = st.text_area("Format: KOD ADET", height=200, key="portfolio_input")
-        st.write(f"Your persistent user ID: {persistent_user_id}")
+        st.write(f"Anonim kullanıcı kimliğiniz: {persistent_user_id}")
         calc_button = st.button("Hesapla")
 
     # Only proceed with calculation if button is pressed
