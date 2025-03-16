@@ -2,32 +2,6 @@ import streamlit as st
 
 st.set_page_config(page_title="YatırıMekko", layout="wide")
 
-import streamlit.components.v1 as components
-
-# Add this at the very top of your file (after your imports)
-components.html(
-    """
-    <script>
-    (function() {
-      // Retrieve persistent UID from localStorage or generate a new one
-      var uid = localStorage.getItem("persistent_uid");
-      if (!uid) {
-          uid = Math.random().toString(36).substring(2);
-          localStorage.setItem("persistent_uid", uid);
-      }
-      // Update the URL query parameter if necessary
-      var params = new URLSearchParams(window.location.search);
-      if (!params.has("persistent_uid") || params.get("persistent_uid") !== uid) {
-          params.set("persistent_uid", uid);
-          var newurl = window.location.protocol + "//" + window.location.host + window.location.pathname + "?" + params.toString();
-          window.history.replaceState({}, "", newurl);
-      }
-    })();
-    </script>
-    """,
-    height=0
-)
-
 import os
 from datetime import datetime, timedelta
 import pandas as pd
@@ -40,6 +14,9 @@ from bs4 import BeautifulSoup
 import warnings
 from supabase import create_client, Client
 import uuid
+from streamlit_cookies_manager import EncryptedCookieManager
+
+
 
 # These must be stored in your Streamlit secrets under the [SUPABASE] section
 SUPABASE_URL = st.secrets["SUPABASE"]["URL"]
@@ -478,17 +455,20 @@ def create_mekko_chart(investments):
 # 3. STREAMLIT APP LAYOUT
 ###############################################################################
 def main():
-      # Retrieve persistent UID from query parameters (set via the JavaScript above)
-    query_params = st.experimental_get_query_params()
-    if "persistent_uid" in query_params:
-        persistent_user_id = query_params["persistent_uid"][0]
-    else:
-        # Fallback in case the query parameter is missing
-        import uuid
-        persistent_user_id = str(uuid.uuid4())
-    
-    st.write(f"Persistent UID: {persistent_user_id}")
+    # Initialize the cookie manager using a secret key stored in Streamlit secrets.
+    # Make sure you add a [COOKIE] section with COOKIE_SECRET_KEY in your Streamlit secrets file.
 
+    cookies = EncryptedCookieManager(prefix="yatirimekko_",password = st.secrets["COOKIE"]["COOKIE_SECRET_KEY"])
+    if not cookies.ready():
+        st.stop()  # Wait until cookies are ready
+
+    # If there's no user_id stored in the cookies, generate one and save it.
+    if "user_id" not in cookies:
+        cookies["user_id"] = str(uuid.uuid4())
+        cookies.save()
+
+    # Retrieve the persistent user id.
+    persistent_user_id = cookies.get("user_id")
 
     if "retrieved_data" not in st.session_state:
         st.session_state["retrieved_data"] = retrieve_data(persistent_user_id)
